@@ -6,6 +6,37 @@ namespace CodexUsageWidget.Tests;
 public sealed class CodexUsageProviderTests
 {
     [Fact]
+    public async Task RateLimitOnlyReadKeepsWeeklyLimitAndResetCreditsWithoutTokenRequest()
+    {
+        await using var session = new FakeCodexAppServerSession("""
+            {
+              "rateLimits": {
+                "limitId": "codex",
+                "primary": { "usedPercent": 32, "windowDurationMins": 10080 }
+              },
+              "rateLimitResetCredits": { "availableCount": 2 }
+            }
+            """);
+        await using var provider = new CodexUsageProvider(session) { IncludeTokenActivity = false };
+
+        var snapshot = await provider.ReadUsageAsync();
+
+        Assert.Equal(68, Assert.Single(snapshot.GeneralWindows).RemainingPercent);
+        Assert.Equal(2, snapshot.RateLimits.ResetCredits?.AvailableCount);
+        Assert.Null(snapshot.TokenActivity);
+        Assert.Equal(["account/rateLimits/read"], session.Requests);
+
+        provider.IncludeTokenActivity = true;
+        await provider.ReadUsageAsync();
+        Assert.Contains("account/usage/read", session.Requests);
+
+        session.Requests.Clear();
+        provider.IncludeTokenActivity = false;
+        await provider.ReadUsageAsync();
+        Assert.Equal(["account/rateLimits/read"], session.Requests);
+    }
+
+    [Fact]
     public async Task ReadUsageKeepsRateLimitsWhenTokenActivityFails()
     {
         await using var session = new FakeCodexAppServerSession(
@@ -43,6 +74,8 @@ public sealed class CodexUsageProviderTests
         private readonly JsonElement _tokenUsage;
         private readonly Exception? _tokenUsageError;
 
+        public List<string> Requests { get; } = [];
+
         public FakeCodexAppServerSession(string rateLimits, Exception? tokenUsageError = null)
         {
             _rateLimits = ParseAndClone(rateLimits);
@@ -65,6 +98,7 @@ public sealed class CodexUsageProviderTests
         {
             _ = parameters;
             cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add(method);
             if (method == "account/rateLimits/read")
             {
                 return Task.FromResult(_rateLimits);

@@ -58,6 +58,13 @@ visible below it. Compact mode focuses on limits; Details adds account and token
 **Taskbar label.** Shows the same selected percentage beside the Windows notification area.
 The tray icon and its tooltip follow that selection too.
 
+This fork also shows the available earned-reset count as `R2` (or `R--` when the server
+does not report it). Taskbar startup defers the desktop view until it is opened, and the
+detailed view is created only when Details is selected. Token activity is requested only
+while that detailed view is visible. Rate-limit/reset-credit reads, live notifications,
+and the two-minute refresh interval remain active. Activity monitoring starts only when
+recognized hooks are installed and enabled, and is rechecked after Settings closes.
+
 Choose `5h limit`, `Weekly limit`, or `Most constrained` in **Settings** under **Usage**.
 The 5-hour window is the default. Available windows depend on the Codex account, so the
 widget falls back to an available window when Codex does not return the selected one.

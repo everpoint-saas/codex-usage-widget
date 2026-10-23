@@ -5,6 +5,21 @@ namespace CodexUsageWidget.Tests;
 
 public sealed class CodexHookConfigurationManagerTests : IDisposable
 {
+    [Fact]
+    public void MonitoringRequiresRecognizedHooksAndEnabledFeature()
+    {
+        var manager = CreateManager();
+        Assert.False(manager.HasEnabledActivityHooks());
+        manager.Apply(manager.PlanInstall());
+        Assert.True(manager.HasEnabledActivityHooks());
+        File.WriteAllText(Path.Combine(_directory, "config.toml"), "[features]\nhooks = false\n");
+        Assert.False(manager.HasEnabledActivityHooks());
+        File.WriteAllText(Path.Combine(_directory, "config.toml"), "[features]\nhooks = true\n");
+        Assert.True(manager.HasEnabledActivityHooks());
+        manager.Apply(manager.PlanUninstall());
+        Assert.False(manager.HasEnabledActivityHooks());
+    }
+
     private readonly string _directory = Path.Combine(
         Path.GetTempPath(),
         "CodexUsageWidget.Tests",

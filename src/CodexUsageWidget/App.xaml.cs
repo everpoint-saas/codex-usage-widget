@@ -33,7 +33,7 @@ public partial class App : System.Windows.Application, IDisposable
         _languageController = languageController;
     }
 
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
@@ -47,11 +47,14 @@ public partial class App : System.Windows.Application, IDisposable
         _logger = new FileLogger(AppPaths.LogDirectory);
         _exceptionHandler = new GlobalExceptionHandler(this, _logger);
 
-        CodexActivityMonitor? activityMonitor = null;
+        OptionalActivityMonitor? activityMonitor = null;
         try
         {
             var appServerSession = new CodexAppServerSession();
-            var codexUsageProvider = new CodexUsageProvider(appServerSession);
+            var codexUsageProvider = new CodexUsageProvider(appServerSession)
+            {
+                IncludeTokenActivity = false
+            };
             IUsageProvider usageProvider = codexUsageProvider;
             IRateLimitResetConsumer resetConsumer =
                 new CodexRateLimitResetConsumer(
@@ -72,9 +75,12 @@ public partial class App : System.Windows.Application, IDisposable
             usageMonitor.DiagnosticMessage += (_, message) => _logger.Info(message);
             var resetUseCase = new RateLimitResetUseCase(resetConsumer, usageMonitor);
 
-            activityMonitor = new CodexActivityMonitor(
-                new CodexActivityPipeSignalSource(),
-                new CodexTurnCompletionReader(appServerSession));
+            var hookConfiguration = new CodexHookConfigurationManager();
+            activityMonitor = new OptionalActivityMonitor(
+                hookConfiguration.HasEnabledActivityHooks,
+                () => new CodexActivityMonitor(
+                    new CodexActivityPipeSignalSource(),
+                    new CodexTurnCompletionReader(appServerSession)));
             activityMonitor.DiagnosticMessage += (_, message) => _logger.Info(message);
             var processPath = Environment.ProcessPath ??
                 throw new InvalidOperationException("Cannot determine the widget executable path.");
@@ -87,7 +93,7 @@ public partial class App : System.Windows.Application, IDisposable
             }
 
             var activityHookSetupService = new CodexActivityHookSetupService(
-                new CodexHookConfigurationManager(),
+                hookConfiguration,
                 appServerSession);
             _themeController = new AppThemeController(
                 this,
@@ -109,16 +115,12 @@ public partial class App : System.Windows.Application, IDisposable
                 new TrayIconService(),
                 _themeController,
                 _languageController,
-                new TimeFormatPreferenceStore());
+                new TimeFormatPreferenceStore(),
+                enabled => codexUsageProvider.IncludeTokenActivity = enabled);
             MainWindow = window;
-            activityMonitor.StartAsync().GetAwaiter().GetResult();
-            window.Show();
-            if (window.StartsInTaskbarIndicatorMode)
-            {
-                window.Hide();
-            }
+            await window.StartAsync();
 
-            _logger.Info("Codex Usage Widget started.");
+            _logger.Info($"Codex Usage Widget started (widget view initialized: {window.IsWidgetInitialized}).");
         }
         catch (Exception ex)
         {

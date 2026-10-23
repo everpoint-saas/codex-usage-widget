@@ -7,6 +7,7 @@ public sealed class CodexUsageProvider : IUsageProvider
 {
     private readonly ICodexAppServerSession _session;
     private bool _disposed;
+    private volatile bool _includeTokenActivity = true;
 
     public CodexUsageProvider(ICodexAppServerSession session)
     {
@@ -19,6 +20,12 @@ public sealed class CodexUsageProvider : IUsageProvider
 
     public event EventHandler<string>? DiagnosticMessage;
 
+    public bool IncludeTokenActivity
+    {
+        get => _includeTokenActivity;
+        set => _includeTokenActivity = value;
+    }
+
     public async Task<UsageSnapshot> ReadUsageAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -27,7 +34,9 @@ public sealed class CodexUsageProvider : IUsageProvider
             "account/rateLimits/read",
             parameters: null,
             cancellationToken);
-        var tokenActivityTask = ReadTokenActivityAsync(cancellationToken);
+        var tokenActivityTask = IncludeTokenActivity
+            ? ReadTokenActivityAsync(cancellationToken)
+            : Task.FromResult<TokenActivitySummary?>(null);
 
         var rateLimits = CodexRateLimitsParser.Parse(
             await rateLimitsTask.ConfigureAwait(false));

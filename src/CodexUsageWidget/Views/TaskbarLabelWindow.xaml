@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:CodexUsageWidget.Views.Controls"
         xmlns:localization="clr-namespace:CodexUsageWidget.Views.Localization"
-        Width="102"
+        Width="146"
         Height="40"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -124,6 +124,10 @@
                 x:Name="UsageText"
                 Text="--%"
                 FontWeight="SemiBold"
+                Typography.NumeralAlignment="Tabular"
+                Foreground="{DynamicResource TaskbarTextSecondaryBrush}" /><Run
+                x:Name="ResetText"
+                Text=" · R--"
                 Typography.NumeralAlignment="Tabular"
                 Foreground="{DynamicResource TaskbarTextSecondaryBrush}" />
         </TextBlock>

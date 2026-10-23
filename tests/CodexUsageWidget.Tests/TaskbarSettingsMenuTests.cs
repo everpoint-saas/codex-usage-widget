@@ -4,6 +4,8 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using CodexUsageWidget.Application;
 using CodexUsageWidget.Infrastructure.Settings;
+using CodexUsageWidget.Infrastructure.Codex;
+using CodexUsageWidget.Infrastructure.Preview;
 using CodexUsageWidget.Infrastructure.Windows;
 using CodexUsageWidget.Localization;
 using CodexUsageWidget.Views;
@@ -58,6 +60,16 @@ public sealed class TaskbarSettingsMenuTests
                 var labelSurface = Assert.IsType<Border>(
                     window.FindName("LabelSurface"));
                 Assert.Contains("Sat 14:05", Assert.IsType<string>(labelSurface.ToolTip));
+                window.UpdateUsage("Weekly limit", 68, null, resetCount: 2);
+                var resetText = Assert.IsType<System.Windows.Documents.Run>(window.FindName("ResetText"));
+                Assert.Equal(" · R2", resetText.Text);
+                Assert.Contains("2 available", Assert.IsType<string>(labelSurface.ToolTip));
+                window.SetTimeFormatPreference(TimeFormatPreference.TwentyFourHour);
+                Assert.Equal(" · R2", resetText.Text);
+                window.UpdateUsage("Weekly limit", 68, null, resetCount: 0);
+                Assert.Equal(" · R0", resetText.Text);
+                window.UpdateUsage(null, null, null);
+                Assert.Equal(" · R--", resetText.Text);
 
                 Assert.Contains(
                     menu.Items.OfType<MenuItem>(),
@@ -269,6 +281,7 @@ public sealed class TaskbarSettingsMenuTests
                                 System.Windows.FrameworkElement.UnloadedEvent));
                     }
 
+                VerifyLazyTaskbarStartup(themeController, themeTestDirectory);
                 window.Close();
                 application.Shutdown();
                 }
@@ -309,6 +322,63 @@ public sealed class TaskbarSettingsMenuTests
     {
         var surface = Assert.IsType<Border>(button.Template.FindName("ButtonSurface", button));
         return Assert.IsType<SolidColorBrush>(surface.Background).Color;
+    }
+
+    private static void VerifyLazyTaskbarStartup(
+        AppThemeController themeController,
+        string directory)
+    {
+        var displayStore = new DisplayModeStore(Path.Combine(directory, "display.txt"));
+        displayStore.Save(WidgetDisplayMode.TaskbarIndicator);
+        var densityStore = new WidgetDensityStore(Path.Combine(directory, "density.txt"));
+        densityStore.Save(WidgetDensity.Compact);
+        var limitStore = new DisplayedLimitPreferenceStore(Path.Combine(directory, "limit.txt"));
+        limitStore.Save(DisplayedLimitPreference.Weekly);
+        var preview = new PreviewUsageProvider(new CodexUsageProvider(new CodexAppServerSession()));
+        var usage = new UsageMonitor(preview);
+        var activity = new OptionalActivityMonitor(() => false, () =>
+            throw new InvalidOperationException("Disabled monitoring must not be created."));
+        var demand = new List<bool>();
+        var main = new MainWindow(
+            usage,
+            new RateLimitResetUseCase(preview, usage),
+            activity,
+            new StubActivityHookSetupService(),
+            new StubCodexLauncher(),
+            displayStore,
+            densityStore,
+            limitStore,
+            new StartupRegistrationService(Environment.ProcessPath!, new PreviewStartupRegistrationStore()),
+            new TrayIconService(),
+            themeController,
+            new AppLanguageController(LanguagePreference.English, CultureInfo.GetCultureInfo("en-US")),
+            new TimeFormatPreferenceStore(Path.Combine(directory, "time.txt")),
+            demand.Add);
+        try
+        {
+            main.StartAsync().GetAwaiter().GetResult();
+            Assert.False(main.IsWidgetInitialized);
+            Assert.False(main.IsDetailedViewInitialized);
+            Assert.Null(main.Content);
+            Assert.Empty(demand);
+
+            main.ShowWidget();
+            Assert.True(main.IsWidgetInitialized);
+            Assert.NotNull(main.Content);
+            Assert.False(main.IsDetailedViewInitialized);
+            Assert.Empty(demand);
+            var densityButton = Assert.IsType<Button>(main.FindName("DensityButton"));
+            densityButton.RaiseEvent(new System.Windows.RoutedEventArgs(Button.ClickEvent));
+            Assert.True(main.IsDetailedViewInitialized);
+            Assert.Equal([true], demand);
+            main.Hide();
+            Assert.Equal([true, false], demand);
+        }
+        finally
+        {
+            main.NotifySessionEnding();
+            main.Close();
+        }
     }
 
     private sealed class StubActivityHookSetupService : IActivityHookSetupService

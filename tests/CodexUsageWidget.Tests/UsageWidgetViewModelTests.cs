@@ -1,9 +1,12 @@
+using System.Globalization;
 using CodexUsageWidget.Application;
 using CodexUsageWidget.Domain;
+using CodexUsageWidget.Localization;
 using CodexUsageWidget.Views.ViewModels;
 
 namespace CodexUsageWidget.Tests;
 
+[Collection("Localization")]
 public sealed class UsageWidgetViewModelTests
 {
     [Fact]
@@ -91,6 +94,7 @@ public sealed class UsageWidgetViewModelTests
     [Fact]
     public void FromSnapshotFormatsUpdatedTimeUsingPreference()
     {
+        Strings.Current.SetCulture(CultureInfo.GetCultureInfo("en-US"));
         var window = new UsageWindow("5h limit", 20, 300, null);
         var snapshot = new UsageSnapshot(
             new UsageRateLimits(

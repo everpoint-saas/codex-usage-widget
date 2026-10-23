@@ -41,6 +41,12 @@ public sealed partial class CodexHookConfigurationManager
 
     public CodexHookConfigurationPlan PlanUninstall() => PlanChange(install: false);
 
+    public bool HasEnabledActivityHooks()
+    {
+        var plan = PlanInstall();
+        return plan.Error is null && plan.HasRecognizedHandlers;
+    }
+
     public void Apply(CodexHookConfigurationPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);

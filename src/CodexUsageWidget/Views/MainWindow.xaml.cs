@@ -21,7 +21,8 @@ public partial class MainWindow : Window
 
     private readonly UsageMonitor _usageMonitor;
     private readonly RateLimitResetUseCase _resetUseCase;
-    private readonly CodexActivityMonitor _activityMonitor;
+    private readonly OptionalActivityMonitor _activityMonitor;
+    private readonly Action<bool> _setTokenActivityEnabled;
     private readonly IActivityHookSetupService _activityHookSetupService;
     private readonly ICodexLauncher _codexLauncher;
     private readonly DisplayModeStore _displayModeStore;
@@ -36,6 +37,7 @@ public partial class MainWindow : Window
     private readonly WidgetVisibilityController _widgetVisibility;
     private readonly MainWindowCloseState _closeState = new();
     private SettingsWindow? _settingsWindow;
+    private Controls.DetailedUsageView? _detailedView;
     private WidgetDisplayMode _displayMode;
     private WidgetDensity _density;
     private DisplayedLimitPreference _displayedLimitPreference;
@@ -48,11 +50,13 @@ public partial class MainWindow : Window
     private bool _isResetDialogOpen;
     private bool _resetUsePending;
     private bool _shutdownStarted;
+    private bool _widgetInitialized;
+    private bool _tokenActivityEnabled;
 
     public MainWindow(
         UsageMonitor usageMonitor,
         RateLimitResetUseCase resetUseCase,
-        CodexActivityMonitor activityMonitor,
+        OptionalActivityMonitor activityMonitor,
         IActivityHookSetupService activityHookSetupService,
         ICodexLauncher codexLauncher,
         DisplayModeStore displayModeStore,
@@ -62,11 +66,13 @@ public partial class MainWindow : Window
         TrayIconService trayIcon,
         AppThemeController themeController,
         AppLanguageController languageController,
-        TimeFormatPreferenceStore timeFormatPreferenceStore)
+        TimeFormatPreferenceStore timeFormatPreferenceStore,
+        Action<bool> setTokenActivityEnabled)
     {
         _usageMonitor = usageMonitor;
         _resetUseCase = resetUseCase;
         _activityMonitor = activityMonitor;
+        _setTokenActivityEnabled = setTokenActivityEnabled;
         _activityHookSetupService = activityHookSetupService;
         _codexLauncher = codexLauncher;
         _displayModeStore = displayModeStore;
@@ -83,25 +89,62 @@ public partial class MainWindow : Window
         _timeFormatPreference = timeFormatPreferenceStore.Load();
         _widgetVisibility = new WidgetVisibilityController(() => IsVisible, ShowWidget, Hide);
 
-        InitializeComponent();
         _taskbarLabel.SetTimeFormatPreference(_timeFormatPreference);
-        DataContext = _viewModel;
-        ApplyDensity(repositionBottomEdge: false);
         WireEvents();
     }
 
     public bool StartsInTaskbarIndicatorMode => _displayMode == WidgetDisplayMode.TaskbarIndicator;
+
+    internal bool IsWidgetInitialized => _widgetInitialized;
+
+    internal bool IsDetailedViewInitialized => _detailedView is not null;
+
+    public async Task StartAsync()
+    {
+        _trayIcon.SetDisplayMode(_displayMode);
+        _trayIcon.SetTheme(_themeController.EffectiveTheme);
+        _taskbarLabel.SetSystemTheme(_themeController.SystemTheme);
+        if (StartsInTaskbarIndicatorMode)
+        {
+            _taskbarLabel.ShowLabel();
+        }
+        else
+        {
+            ShowWidget();
+        }
+
+        await _activityMonitor.RefreshConfigurationAsync();
+        await _usageMonitor.StartAsync();
+    }
+
+    private void EnsureWidgetInitialized()
+    {
+        if (_widgetInitialized)
+        {
+            return;
+        }
+
+        InitializeComponent();
+        _widgetInitialized = true;
+        DataContext = _viewModel;
+        ApplyDensity(repositionBottomEdge: false);
+        ApplyActivityIndicatorState();
+        if (_latestSnapshot is { } snapshot)
+        {
+            RenderSnapshot(snapshot);
+        }
+    }
 
     private void WireEvents()
     {
         Loaded += MainWindowOnLoaded;
         Deactivated += MainWindowOnDeactivated;
         Closing += MainWindowOnClosing;
+        IsVisibleChanged += (_, _) => UpdateTokenActivityDemand();
 
         _usageMonitor.RefreshStarted += UsageMonitorOnRefreshStarted;
         _usageMonitor.SnapshotUpdated += UsageMonitorOnSnapshotUpdated;
         _usageMonitor.RefreshFailed += UsageMonitorOnRefreshFailed;
-        DetailedView.ResetUseRequested += DetailedViewOnResetUseRequested;
         _activityMonitor.ActivityChanged += ActivityMonitorOnActivityChanged;
         _taskbarLabel.OpenRequested += (_, _) =>
             Dispatcher.BeginInvoke(_widgetVisibility.Show, DispatcherPriority.ApplicationIdle);
@@ -138,20 +181,11 @@ public partial class MainWindow : Window
             Dispatcher.BeginInvoke(() => _taskbarLabel.SetSystemTheme(theme));
     }
 
-    private async void MainWindowOnLoaded(object sender, RoutedEventArgs e)
+    private void MainWindowOnLoaded(object sender, RoutedEventArgs e)
     {
         PositionNearWorkAreaEdge();
-        _trayIcon.SetDisplayMode(_displayMode);
-        _trayIcon.SetTheme(_themeController.EffectiveTheme);
-        _taskbarLabel.SetSystemTheme(_themeController.SystemTheme);
         SetDisplayedLimitPreferenceState(_displayedLimitPreference);
         SetStartupRegistrationState(_startupRegistration.IsEnabled);
-        if (_displayMode == WidgetDisplayMode.TaskbarIndicator)
-        {
-            _taskbarLabel.ShowLabel();
-        }
-
-        await _usageMonitor.StartAsync();
     }
 
     private void UsageMonitorOnRefreshStarted() =>
@@ -173,7 +207,10 @@ public partial class MainWindow : Window
     private void ApplyActivityIndicatorState()
     {
         var isActive = _isRealActivityActive || _isActivityPreviewEnabled;
-        WidgetActivityDots.IsActive = isActive;
+        if (_widgetInitialized)
+        {
+            WidgetActivityDots.IsActive = isActive;
+        }
         _taskbarLabel.SetActivityState(isActive);
     }
 
@@ -181,25 +218,28 @@ public partial class MainWindow : Window
     {
         _latestSnapshot = snapshot;
         var displayedWindow = ResolveDisplayedWindow(snapshot);
-        var nextViewModel = UsageWidgetViewModel.FromSnapshot(
-            snapshot,
-            displayedWindow,
-            _timeFormatPreference);
-        SetViewModel(nextViewModel);
-        if (_density == WidgetDensity.Detailed)
+        if (_widgetInitialized)
         {
-            DetailedView.ScrollToTop();
-        }
-        else
-        {
-            ApplyDensity(repositionBottomEdge: true);
+            SetViewModel(UsageWidgetViewModel.FromSnapshot(
+                snapshot,
+                displayedWindow,
+                _timeFormatPreference));
+            if (_density == WidgetDensity.Detailed)
+            {
+                _detailedView?.ScrollToTop();
+            }
+            else
+            {
+                ApplyDensity(repositionBottomEdge: true);
+            }
         }
 
         _trayIcon.UpdateUsage(displayedWindow?.RemainingPercent);
         _taskbarLabel.UpdateUsage(
             displayedWindow?.Label,
             displayedWindow?.RemainingPercent,
-            displayedWindow?.ResetsAt);
+            displayedWindow?.ResetsAt,
+            snapshot.RateLimits.ResetCredits?.AvailableCount);
     }
 
     private void RenderError(string message)
@@ -250,11 +290,19 @@ public partial class MainWindow : Window
     private void SetViewModel(UsageWidgetViewModel viewModel)
     {
         _viewModel = viewModel;
-        DataContext = viewModel;
+        if (_widgetInitialized)
+        {
+            DataContext = viewModel;
+        }
     }
 
     private void ApplyDensity(bool repositionBottomEdge)
     {
+        if (!_widgetInitialized)
+        {
+            return;
+        }
+
         var previousBottom = IsLoaded ? Top + ActualHeight : 0d;
         var workArea = SystemParameters.WorkArea;
         var desiredHeight = _density == WidgetDensity.Detailed
@@ -266,7 +314,7 @@ public partial class MainWindow : Window
         CompactView.Visibility = _density == WidgetDensity.Compact
             ? Visibility.Visible
             : Visibility.Collapsed;
-        DetailedView.Visibility = _density == WidgetDensity.Detailed
+        DetailedHost.Visibility = _density == WidgetDensity.Detailed
             ? Visibility.Visible
             : Visibility.Collapsed;
         DensityGlyphRotation.Angle = _density == WidgetDensity.Detailed ? 180d : 0d;
@@ -276,7 +324,14 @@ public partial class MainWindow : Window
 
         if (_density == WidgetDensity.Detailed)
         {
-            DetailedView.ScrollToTop();
+            if (_detailedView is null)
+            {
+                _detailedView = new Controls.DetailedUsageView();
+                _detailedView.ResetUseRequested += DetailedViewOnResetUseRequested;
+                DetailedHost.Content = _detailedView;
+            }
+
+            _detailedView.ScrollToTop();
         }
 
         if (repositionBottomEdge && IsLoaded)
@@ -303,6 +358,7 @@ public partial class MainWindow : Window
         _density = density;
         _densityStore.Save(_density);
         ApplyDensity(repositionBottomEdge: true);
+        UpdateTokenActivityDemand();
     }
 
     private void PositionNearWorkAreaEdge()
@@ -312,18 +368,19 @@ public partial class MainWindow : Window
         Top = workArea.Bottom - Height - 20 + WidgetSurface.Margin.Bottom;
     }
 
-    private void ShowWidget()
+    internal void ShowWidget()
     {
+        EnsureWidgetInitialized();
         Show();
         WindowState = WindowState.Normal;
         Activate();
         if (_density == WidgetDensity.Detailed)
         {
-            DetailedView.ScrollToTop();
+            _detailedView?.ScrollToTop();
         }
     }
 
-    private void ShowSettings()
+    private async void ShowSettings()
     {
         if (_settingsWindow is { } existingWindow)
         {
@@ -380,6 +437,24 @@ public partial class MainWindow : Window
             {
                 Hide();
             }
+
+            await _activityMonitor.RefreshConfigurationAsync();
+        }
+    }
+
+    private void UpdateTokenActivityDemand()
+    {
+        var enabled = !_shutdownStarted && IsVisible && _density == WidgetDensity.Detailed;
+        if (enabled == _tokenActivityEnabled)
+        {
+            return;
+        }
+
+        _tokenActivityEnabled = enabled;
+        _setTokenActivityEnabled(enabled);
+        if (enabled)
+        {
+            _ = _usageMonitor.RefreshAfterCurrentAsync();
         }
     }
 
@@ -483,7 +558,7 @@ public partial class MainWindow : Window
         }
 
         _resetUsePending = true;
-        DetailedView.SetResetUsePending(pending: true);
+        _detailedView!.SetResetUsePending(pending: true);
         try
         {
             var result = await _resetUseCase.UseAsync(e.Credit.CreditId);
@@ -517,7 +592,7 @@ public partial class MainWindow : Window
         finally
         {
             _resetUsePending = false;
-            DetailedView.SetResetUsePending(pending: false);
+            _detailedView.SetResetUsePending(pending: false);
         }
     }
 
@@ -633,6 +708,7 @@ public partial class MainWindow : Window
         }
 
         _shutdownStarted = true;
+        UpdateTokenActivityDemand();
         _taskbarLabel.HideLabel();
         _taskbarLabel.CloseLabel();
         _trayIcon.Dispose();

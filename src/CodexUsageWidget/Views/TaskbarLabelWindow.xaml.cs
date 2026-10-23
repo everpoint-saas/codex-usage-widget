@@ -23,6 +23,7 @@ public partial class TaskbarLabelWindow : Window
     private string? _limitLabel;
     private double? _remainingPercent;
     private DateTimeOffset? _resetsAt;
+    private long? _resetCount;
     private TimeFormatPreference _timeFormatPreference;
     private bool _labelRequested;
     private bool _isTaskActive;
@@ -168,21 +169,27 @@ public partial class TaskbarLabelWindow : Window
     public void SetTimeFormatPreference(TimeFormatPreference preference)
     {
         _timeFormatPreference = preference;
-        UpdateUsage(_limitLabel, _remainingPercent, _resetsAt);
+        UpdateUsage(_limitLabel, _remainingPercent, _resetsAt, _resetCount);
     }
 
     public void UpdateUsage(
         string? limitLabel,
         double? remainingPercent,
-        DateTimeOffset? resetsAt)
+        DateTimeOffset? resetsAt,
+        long? resetCount = null)
     {
         _limitLabel = limitLabel;
         _remainingPercent = remainingPercent;
         _resetsAt = resetsAt;
+        _resetCount = resetCount;
+        ResetText.Text = resetCount is { } count ? $" · R{Math.Max(0, count)}" : " · R--";
+        var resetTooltip = resetCount is { } available
+            ? $"{Strings.Get("Usage_RateLimitResets")}: {Strings.Format("Usage_CountAvailable", Math.Max(0, available))}"
+            : $"{Strings.Get("Usage_RateLimitResets")}: --";
         if (remainingPercent is null)
         {
             UsageText.Text = "--%";
-            LabelSurface.ToolTip = Strings.Get("Taskbar_UsageUnavailable");
+            LabelSurface.ToolTip = $"{Strings.Get("Taskbar_UsageUnavailable")}\n{resetTooltip}";
             return;
         }
 
@@ -191,7 +198,7 @@ public partial class TaskbarLabelWindow : Window
         var label = string.IsNullOrWhiteSpace(limitLabel)
             ? "Codex"
             : UsageLabelLocalizer.Localize(limitLabel);
-        LabelSurface.ToolTip = resetsAt is null
+        var usageTooltip = resetsAt is null
             ? Strings.Format("Taskbar_Remaining", label, value)
             : Strings.Format(
                 "Taskbar_RemainingWithReset",
@@ -200,13 +207,14 @@ public partial class TaskbarLabelWindow : Window
                 TimeTextFormatter.FormatDayAndTime(
                     resetsAt.Value,
                     _timeFormatPreference));
+        LabelSurface.ToolTip = $"{usageTooltip}\n{resetTooltip}";
     }
 
     private void StringsOnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == "Item[]" && !_isClosed)
         {
-            UpdateUsage(_limitLabel, _remainingPercent, _resetsAt);
+            UpdateUsage(_limitLabel, _remainingPercent, _resetsAt, _resetCount);
         }
     }
 

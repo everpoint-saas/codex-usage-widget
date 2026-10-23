@@ -22,7 +22,9 @@ public sealed class UsageTextFormatterTests : IDisposable
 
         var result = UsageTextFormatter.FormatReset(reset, now);
 
-        Assert.Equal("Resets in 3h · 2:10 PM", result);
+        Assert.Equal(
+            $"Resets in 3h · {reset.ToString("t", Strings.Current.WindowsRegionalCulture)}",
+            result);
     }
 
     [Fact]

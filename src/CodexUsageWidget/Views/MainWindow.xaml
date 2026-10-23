@@ -129,9 +129,9 @@
             </Grid>
 
             <controls:CompactUsageView x:Name="CompactView" Grid.Row="1" />
-            <controls:DetailedUsageView x:Name="DetailedView"
-                                        Grid.Row="1"
-                                        Visibility="Collapsed" />
+            <ContentControl x:Name="DetailedHost"
+                            Grid.Row="1"
+                            Visibility="Collapsed" />
 
             <Border Grid.Row="2"
                     Margin="16,0,16,0"
